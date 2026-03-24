@@ -12,8 +12,8 @@ import { createClient } from "@supabase/supabase-js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || "https://muagiwdidfahamwptqlf.supabase.co";
+const supabaseKey = process.env.SUPABASE_ANON_KEY || "sb_publishable_J4bgcE-hJjShw8Xqss_0OQ_vNJHMicK";
 
 if (!supabaseUrl || !supabaseKey) {
   console.error("SUPABASE_URL e SUPABASE_ANON_KEY precisam estar configurados no .env");
