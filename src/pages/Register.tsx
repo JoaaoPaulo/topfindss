@@ -1,0 +1,146 @@
+import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ShoppingBag, Lock, Mail, ArrowRight, User } from "lucide-react";
+import { motion } from "motion/react";
+
+interface RegisterProps {
+    onLogin: (token: string, user: any) => void;
+}
+
+export default function Register({ onLogin }: RegisterProps) {
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+    const [loading, setLoading] = useState(false);
+    const navigate = useNavigate();
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError("");
+
+        try {
+            const res = await fetch("/api/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, email, password }),
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                onLogin(data.token, data.user);
+                navigate("/");
+            } else {
+                setError(data.error || "Erro ao criar conta");
+            }
+        } catch (err) {
+            setError("Erro de conexão com o servidor");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-4 font-sans">
+            <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl shadow-brand/5 border border-neutral-200 p-8 md:p-10"
+            >
+                <div className="flex flex-col items-center text-center mb-8">
+                    <Link to="/" className="w-16 h-16 bg-brand rounded-2xl flex items-center justify-center mb-4 shadow-xl shadow-brand/20 hover:scale-105 transition-transform cursor-pointer">
+                        <ShoppingBag className="w-8 h-8 text-white" />
+                    </Link>
+                    <h1 className="text-2xl font-black tracking-tight text-neutral-900">Criar Conta</h1>
+                    <p className="text-neutral-500 text-sm mt-1">Junte-se a nós para salvar seus itens favoritos</p>
+                </div>
+
+                {error && (
+                    <div className="mb-6 p-4 bg-red-50 border border-red-100 text-red-600 text-sm font-medium rounded-xl text-center">
+                        {error}
+                    </div>
+                )}
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                        <div className="relative">
+                            <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+                            <input
+                                type="text"
+                                required
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Seu nome"
+                                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl py-3.5 pl-11 pr-4 focus:ring-2 focus:ring-brand/5 focus:border-brand transition-all text-sm outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest ml-1">E-mail</label>
+                        <div className="relative">
+                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+                            <input
+                                type="email"
+                                required
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="seu@email.com"
+                                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl py-3.5 pl-11 pr-4 focus:ring-2 focus:ring-brand/5 focus:border-brand transition-all text-sm outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-neutral-400 uppercase tracking-widest ml-1">Senha</label>
+                        <div className="relative">
+                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-400" />
+                            <input
+                                type="password"
+                                required
+                                minLength={6}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl py-3.5 pl-11 pr-4 focus:ring-2 focus:ring-brand/5 focus:border-brand transition-all text-sm outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-neutral-900 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-black transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-xl shadow-black/10 mt-2"
+                    >
+                        {loading ? (
+                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                            <>
+                                Cadastrar
+                                <ArrowRight className="w-4 h-4" />
+                            </>
+                        )}
+                    </button>
+                </form>
+
+                <div className="mt-8 pt-8 border-t border-neutral-100 flex flex-col items-center gap-4">
+                    <p className="text-sm text-neutral-500">
+                        Já possui conta?{" "}
+                        <Link to="/login" className="font-semibold text-brand hover:text-brand/80 transition-colors">
+                            Fazer Login
+                        </Link>
+                    </p>
+                    <button
+                        onClick={() => navigate("/")}
+                        className="text-sm font-semibold text-neutral-400 hover:text-neutral-600 transition-colors"
+                    >
+                        Voltar para o site
+                    </button>
+                </div>
+            </motion.div>
+        </div>
+    );
+}
