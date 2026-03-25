@@ -201,7 +201,7 @@ async function startServer() {
         });
       }
 
-      // --- STRATEGY ROTATION ENGINE (Proactive & Deep Extraction) ---
+      // --- SIMPLE & ROBUST BOUTIQUE SCRAPER ---
       let rawTitle = "";
       let image = "";
       let description = "";
@@ -209,149 +209,95 @@ async function startServer() {
       let categoryName = "Variedades";
       let subcategoryName = "Geral";
       let html = "";
-      let isRateLimit = false;
-
-      // Extract initial MLB ID if present in URL
-      let mlbId = link_produto.match(/MLB[-]?(\d+)/i)?.[0];
-      if (mlbId && !mlbId.startsWith('MLB')) mlbId = `MLB${mlbId.replace('MLB', '')}`;
       
-      const isML = link_produto.includes('mercadolivre');
+      console.log(`[SIMPLE SCRAPE] Visiting: ${link_produto}`);
+      
+      try {
+        const headers = getStealthHeaders();
+        const response = await fetch(link_produto, { 
+          headers,
+          signal: (AbortSignal as any).timeout(12000)
+        });
+        
+        if (!response.ok) throw new Error(`Status ${response.status}`);
+        
+        html = await response.text();
+        
+        const getMeta = (prop: string) => {
+          const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|twitter:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
+          const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|twitter:|)${prop}["']`, 'i');
+          return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
+        };
 
-      // Helper for Strategy 1 (API)
-      const attemptAPI = async (id: string) => {
-        console.log(`[DEEP DISCOVERY] Attempting API for ${id}...`);
-        try {
-          const apiRes = await fetch(`https://api.mercadolibre.com/items/${id}`, {
-            headers: { 'User-Agent': getStealthHeaders()['User-Agent'] }
-          });
-          if (apiRes.ok) {
-            const apiData = await apiRes.json();
-            rawTitle = apiData.title;
-            image = apiData.thumbnail?.replace('-I.jpg', '-O.jpg') || apiData.pictures?.[0]?.url || "";
-            price = apiData.price || 0;
-            
-            // Category via API
-            if (apiData.category_id) {
-              const catRes = await fetch(`https://api.mercadolibre.com/categories/${apiData.category_id}`);
-              if (catRes.ok) {
-                const catJson = await catRes.json();
-                categoryName = catJson.path_from_root?.[0]?.name || categoryName;
-                subcategoryName = catJson.path_from_root?.[catJson.path_from_root.length - 1]?.name || subcategoryName;
-              }
-            }
-            console.log(`[STRATEGY 1] API SUCCESS: ${rawTitle}`);
-            return true;
-          }
-        } catch (e) {}
-        return false;
-      };
+        // 1. Extraction: Name
+        rawTitle = getMeta('title') || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0]?.trim() || "";
+        
+        // 2. Extraction: Price
+        let priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "";
+        if (!priceStr) {
+           const pMatch = html.match(/class=["']andes-money-amount__fraction["'][^>]*>([^<]+)</i) || html.match(/R\$\s?([\d.,]+)/i);
+           priceStr = pMatch?.[1] || "0";
+        }
+        price = parseFloat(priceStr.replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.')) || 0;
 
-      // Execution Loop: Try multiple identities
-      const strategies = ['API', 'MOBILE', 'DESKTOP'];
-      for (const strategy of strategies) {
-        if (rawTitle && image) break; // We got it!
-
-        if (strategy === 'API' && isML && mlbId) {
-          if (await attemptAPI(mlbId)) break;
+        // 3. Extraction: Image (High Res fallback)
+        image = getMeta('image');
+        if (!image || image.includes('placeholder')) {
+           const imgPatterns = [
+              /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg|jpeg)/i,
+              /https:\/\/m\.media-amazon\.com\/images\/I\/[^"']+\.jpg/i
+           ];
+           for (const p of imgPatterns) {
+              const m = html.match(p);
+              if (m) { image = m[0]; break; }
+           }
         }
 
-        if (strategy === 'MOBILE' || strategy === 'DESKTOP') {
-          console.log(`[PROACTIVE ROTATION] Strategy: ${strategy} | Target: ${link_produto}`);
-          try {
-            const headers = getStealthHeaders();
-            const response = await fetch(link_produto, { 
-              headers,
-              signal: (AbortSignal as any).timeout(12000)
-            });
-            
-            if (response.ok) {
-              html = await response.text();
-              
-              // DEEP DISCOVERY: Search for hidden IDs in HTML
-              if (isML && (!rawTitle || !image)) {
-                 const discoveredId = discoverMLBId(html);
-                 if (discoveredId && discoveredId !== mlbId) {
-                    console.log(`[DEEP DISCOVERY] Found hidden ID: ${discoveredId}`);
-                    if (await attemptAPI(discoveredId)) break;
-                 }
-              }
-
-              const getMeta = (prop: string) => {
-                const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
-                const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']`, 'i');
-                return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
-              };
-
-              rawTitle = getMeta('title') || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
-              image = getMeta('image');
-              description = getMeta('description');
-              
-              if (rawTitle.toLowerCase().includes('robot')) {
-                 rawTitle = ""; 
-                 isRateLimit = true;
-              } else if (rawTitle) {
-                 console.log(`[${strategy} SUCCESS] Title: ${rawTitle}`);
-                 let priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
-                 price = parseFloat(priceStr.replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.')) || 0;
-                 if (!image) image = html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg)/i)?.[0] || "";
-              }
+        // 4. Extraction: Category (Breadcrumbs)
+        const catPatterns = [
+          /andes-breadcrumb__(?:item|link)["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
+          /class=["']breadcrumb-item["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi
+        ];
+        for (const p of catPatterns) {
+          const matches = Array.from(html.matchAll(p));
+          if (matches.length > 0) {
+            const items = matches.map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(i => i && i.length > 2 && i !== ">");
+            if (items.length > 0) {
+              categoryName = items[0];
+              subcategoryName = items[items.length - 1] || items[1] || subcategoryName;
+              break;
             }
-          } catch (e) {
-            console.error(`[ROTATION ERROR] ${strategy} failed for ${link_produto}:`, e.message);
           }
         }
+
+        if (rawTitle.toLowerCase().includes('robot')) rawTitle = "";
+
+      } catch (err: any) {
+        console.error(`[SCRAPE FAILED] ${link_produto}: ${err.message}`);
       }
 
-      // --- FINAL VALIDATION & RECOVERY ---
-      if (!rawTitle || rawTitle.toLowerCase().includes("mercado livre") || rawTitle.match(/^MLB\d+$/i)) {
+      // --- FINAL RECOVERY (SLUG) ---
+      if (!rawTitle || rawTitle.match(/^MLB\d+$/i)) {
         try {
           const urlObj = new URL(link_produto);
           const parts = urlObj.pathname.split('/').filter(Boolean);
           let slug = parts[parts.length - 1] || "";
-          
-          // If the slug is just the ID (e.g. .../p/MLB123), try to get the part before it
           if ((slug.startsWith('MLB') || slug === 'p') && parts.length >= 2) {
              slug = parts[parts.length - 3] || parts[parts.length - 2] || slug;
           }
-          
           if (slug && slug.length > 3) {
-            rawTitle = slug.split('-').map(word => {
-               const w = word.trim();
-               return w.charAt(0).toUpperCase() + w.slice(1);
-            }).join(' ');
-            console.log(`[RECOVERY] Recovered title: ${rawTitle}`);
+            rawTitle = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
           }
         } catch(e) {}
       }
 
       if (!rawTitle) {
-        return res.status(200).json({ 
-          status: 'error', 
-          is_rate_limit: isRateLimit, 
-          message: isRateLimit ? "Bloqueio persistente (Robot). Tente novamente em instantes." : "Não foi possível extrair o nome do produto.",
-          link: link_produto 
-        });
+        return res.status(200).json({ status: 'error', message: "Não foi possível carregar o produto. Verifique se o link está acessível.", link: link_produto });
       }
       
       const title = rawTitle;
-      
-      // Resilient Image Fallback: Try multiple patterns if still missing
-      if (!image && html) {
-          const patterns = [
-            /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg|jpeg)/i,
-            /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-I\.(?:webp|jpg|jpeg)/i,
-            /https:\/\/m\.media-amazon\.com\/images\/I\/[^"']+\.jpg/i
-          ];
-          for (const p of patterns) {
-             const imgMatch = html.match(p);
-             if (imgMatch) {
-                image = imgMatch[0];
-                break;
-             }
-          }
-      }
-      
       if (!image) image = "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
+
 
 
       // --- DEEP CATEGORY & PRICE DISCOVERY ---
