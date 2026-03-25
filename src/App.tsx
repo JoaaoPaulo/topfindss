@@ -11,7 +11,12 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [auth, setAuth] = useState<AuthState>(() => {
     const saved = localStorage.getItem("auth");
-    return saved ? JSON.parse(saved) : { token: null, user: null };
+    if (saved) return JSON.parse(saved);
+    // BYPASS: Default to a mock admin user
+    return { 
+      token: "bypass-token", 
+      user: { id: 1, name: "Admin Convidado", email: "admin@bypass.com", is_admin: true } 
+    };
   });
 
   const fetchCategories = () => {
@@ -34,8 +39,9 @@ export default function App() {
   useEffect(() => {
     fetchCategories();
 
-    // Verifies auth on token
-    if (auth.token) {
+    // Auth verification disabled for bypass
+    /*
+    if (auth.token && auth.token !== "bypass-token") {
       fetch("/api/auth/me", {
         headers: { "Authorization": `Bearer ${auth.token}` }
       }).then(res => {
@@ -47,6 +53,7 @@ export default function App() {
         }
       }).catch(() => handleLogout());
     }
+    */
   }, []);
 
   const handleLogin = (token: string, user: any) => {
@@ -67,7 +74,7 @@ export default function App() {
         <Route path="/login" element={<Login onLogin={handleLogin} />} />
         <Route path="/admin/login" element={<Login onLogin={handleLogin} adminFlow />} />
         <Route path="/register" element={<Register onLogin={handleLogin} />} />
-        <Route path="/admin" element={auth.user?.is_admin ? <AdminDashboard auth={auth} onLogout={handleLogout} categories={categories} onRefreshCategories={fetchCategories} /> : <div className="p-10 text-center"><h1 className="text-2xl font-bold">Acesso Negado</h1><p>Você não tem permissão para acessar o AdminHub.</p> <button onClick={() => window.location.href = '/'} className="mt-4 px-4 py-2 bg-brand text-white rounded">Voltar</button></div>} />
+        <Route path="/admin" element={<AdminDashboard auth={auth} onLogout={handleLogout} categories={categories} onRefreshCategories={fetchCategories} />} />
       </Routes>
     </Router>
   );
