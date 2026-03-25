@@ -447,8 +447,8 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
 
     for (const row of rows) {
       try {
-        // Optimized Jitter: 1200ms to 2500ms (Fast but safe)
-        const jitter = Math.floor(Math.random() * 1300) + 1200;
+        // Safer Jitter: 2500ms to 5000ms
+        const jitter = Math.floor(Math.random() * 2500) + 2500;
         await new Promise(resolve => setTimeout(resolve, jitter));
 
         const res = await fetch("/api/admin/products/import-process", {
@@ -457,6 +457,14 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
           body: JSON.stringify(row)
         });
         const data = await res.json();
+        
+        // Handle Rate Limit Cool-down
+        if (data.is_rate_limit) {
+          console.warn("Rate limit hit, cooling down for 30s...");
+          setImportResults(prev => [{ ...data, message: "Pausa de segurança (30s) para evitar bloqueio..." }, ...prev]);
+          await new Promise(resolve => setTimeout(resolve, 30000));
+          // Retry logic could be added here, but for now we just move to next or let user restart
+        }
         
         // Add original link for reference in list
         data.source_link = row.link_produto;
