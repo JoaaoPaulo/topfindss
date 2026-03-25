@@ -28,33 +28,15 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // Auth Middleware
+  // Auth Middleware (BYPASS ENABLED)
   const authenticate = async (req: any, res: any, next: any) => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-
-      const { data: user, error } = await supabase
-        .from('users')
-        .select('id, email, is_admin')
-        .eq('id', decoded.id)
-        .single();
-
-      if (error || !user) {
-        return res.status(401).json({ error: "User not found" });
-      }
-      req.user = user;
-      next();
-    } catch (e) {
-      res.status(401).json({ error: "Invalid token" });
-    }
+    // Mock user for bypass
+    req.user = { id: 1, email: "admin@bypass.com", is_admin: 1, name: "Admin Convidado" };
+    next();
   };
 
   const requireAdmin = (req: any, res: any, next: any) => {
-    if (!req.user || !req.user.is_admin) {
-      return res.status(403).json({ error: "Forbidden: Admins only" });
-    }
+    // Bypass admin check
     next();
   };
 

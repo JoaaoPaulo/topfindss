@@ -165,10 +165,6 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
   );
 
   useEffect(() => {
-    if (!auth.token) {
-      navigate("/admin/login");
-      return;
-    }
     fetchStats();
     fetchProducts();
     fetchUsers();
