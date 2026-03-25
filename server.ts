@@ -172,18 +172,31 @@ async function startServer() {
       ];
       const selected = UAs[Math.floor(Math.random() * UAs.length)];
 
-      // --- MOBILE-FIRST STEALTH ---
+      // --- MOBILE ROTATION STEALTH ---
+      const MobileUAs = [
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
+      ];
+      const Referers = [
+        'https://www.google.com/',
+        'https://www.bing.com/',
+        'https://linktr.ee/',
+        'https://www.facebook.com/'
+      ];
+
       const baseHeaders: any = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+        'User-Agent': MobileUAs[Math.floor(Math.random() * MobileUAs.length)],
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'pt-BR,pt;q=0.9',
-        'Referer': 'https://www.google.com/',
+        'Referer': Referers[Math.floor(Math.random() * Referers.length)],
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
       };
 
       // 2. Fetch and Scrape
-      console.log(`[IMPORT] Scraping (Mobile): ${link_produto}`);
+      console.log(`[IMPORT] Scraping (Rotated Mobile): ${link_produto}`);
       
       let response;
       try {
@@ -206,7 +219,6 @@ async function startServer() {
 
       // Extract Meta Tags (Greddy Multiline safe)
       const getMeta = (prop: string) => {
-        // [^>]*? [\s\S]*? to handle any attribute order and newlines
         const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
         const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']`, 'i');
         return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
@@ -214,6 +226,18 @@ async function startServer() {
 
       let rawTitle = getMeta('title') || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
       let image = getMeta('image');
+      
+      // Detected rate limit or block page
+      if (!rawTitle || rawTitle.toLowerCase().includes('robot') || rawTitle.toLowerCase().includes('bot check')) {
+         console.warn(`[IMPORT WARNING] Rate limit detected for ${link_produto}`);
+         return res.status(200).json({ 
+           status: 'error', 
+           is_rate_limit: true,
+           message: "Limite de taxa detectado (IP temporariamente restrito). Aguardando pausa...",
+           link: link_produto 
+         });
+      }
+
       let description = getMeta('description');
       
       // Price Extraction (Multiple fallbacks with sanitization)
