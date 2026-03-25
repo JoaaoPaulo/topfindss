@@ -360,7 +360,7 @@ async function startServer() {
         const catPatterns = [
           /andes-breadcrumb__(?:item|link)["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
           /class=["']breadcrumb-item["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
-          /aria-label=["']Breadcrumb["'][^>]*>([\s\S]*?)<\/nav>/i // Target the whole nav if needed
+          /aria-label=["']Breadcrumb["'][^>]*>([\s\S]*?)<\/nav>/gi 
         ];
         
         let foundCats: string[] = [];
