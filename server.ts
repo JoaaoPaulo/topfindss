@@ -201,7 +201,7 @@ async function startServer() {
         });
       }
 
-      // --- SIMPLE & ROBUST BOUTIQUE SCRAPER ---
+      // --- LAYERED EXTRACTION ENGINE (Simple-First) ---
       let rawTitle = "";
       let image = "";
       let description = "";
@@ -210,93 +210,107 @@ async function startServer() {
       let subcategoryName = "Geral";
       let html = "";
       
-      console.log(`[SIMPLE SCRAPE] Visiting: ${link_produto}`);
-      
-      try {
-        const headers = getStealthHeaders();
-        const response = await fetch(link_produto, { 
-          headers,
-          signal: (AbortSignal as any).timeout(12000)
-        });
+      const attemptSimpleScrape = async (targetLink: string, useStealth = false) => {
+        const headers = useStealth ? getStealthHeaders() : { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9'
+        };
         
-        if (!response.ok) throw new Error(`Status ${response.status}`);
-        
-        html = await response.text();
-        
+        try {
+          const response = await fetch(targetLink, { headers, signal: (AbortSignal as any).timeout(10000) });
+          if (!response.ok) return null;
+          const text = await response.text();
+          if (text.toLowerCase().includes('robot') && !text.toLowerCase().includes('product')) return null; // Blocked
+          return text;
+        } catch (e) { return null; }
+      };
+
+      const extractFromHtml = (htmlContent: string) => {
         const getMeta = (prop: string) => {
           const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|twitter:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
           const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|twitter:|)${prop}["']`, 'i');
-          return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
+          return htmlContent.match(r1)?.[1] || htmlContent.match(r2)?.[1] || "";
         };
 
-        // 1. Extraction: Name
-        rawTitle = getMeta('title') || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0]?.trim() || "";
+        const title = getMeta('title') || htmlContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0]?.trim() || "";
+        const img = getMeta('image');
+        const desc = getMeta('description');
         
-        // 2. Extraction: Price
-        let priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "";
-        if (!priceStr) {
-           const pMatch = html.match(/class=["']andes-money-amount__fraction["'][^>]*>([^<]+)</i) || html.match(/R\$\s?([\d.,]+)/i);
-           priceStr = pMatch?.[1] || "0";
+        let pStr = getMeta('price:amount') || htmlContent.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "";
+        if (!pStr) {
+           const pMatch = htmlContent.match(/class=["']andes-money-amount__fraction["'][^>]*>([^<]+)</i) || htmlContent.match(/R\$\s?([\d.,]+)/i);
+           pStr = pMatch?.[1] || "0";
         }
-        price = parseFloat(priceStr.replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.')) || 0;
+        const pNum = parseFloat(pStr.replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.')) || 0;
+        
+        return { title, image: img, description: desc, price: pNum };
+      };
 
-        // 3. Extraction: Image (High Res fallback)
-        image = getMeta('image');
-        if (!image || image.includes('placeholder')) {
-           const imgPatterns = [
-              /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg|jpeg)/i,
-              /https:\/\/m\.media-amazon\.com\/images\/I\/[^"']+\.jpg/i
-           ];
-           for (const p of imgPatterns) {
-              const m = html.match(p);
-              if (m) { image = m[0]; break; }
-           }
-        }
-
-        // 4. Extraction: Category (Breadcrumbs)
-        const catPatterns = [
-          /andes-breadcrumb__(?:item|link)["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
-          /class=["']breadcrumb-item["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi
-        ];
-        for (const p of catPatterns) {
-          const matches = Array.from(html.matchAll(p));
-          if (matches.length > 0) {
-            const items = matches.map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(i => i && i.length > 2 && i !== ">");
-            if (items.length > 0) {
-              categoryName = items[0];
-              subcategoryName = items[items.length - 1] || items[1] || subcategoryName;
-              break;
-            }
-          }
-        }
-
-        if (rawTitle.toLowerCase().includes('robot')) rawTitle = "";
-
-      } catch (err: any) {
-        console.error(`[SCRAPE FAILED] ${link_produto}: ${err.message}`);
+      // STEP 1: Simple Scrape (Manual-like)
+      console.log(`[IMPORT] Step 1: Simple Scrape for ${link_produto}`);
+      html = await attemptSimpleScrape(link_produto) || "";
+      if (html) {
+        const data = extractFromHtml(html);
+        rawTitle = data.title;
+        image = data.image;
+        description = data.description;
+        price = data.price;
       }
 
-      // --- FINAL RECOVERY (SLUG) ---
+      // STEP 2: Intervention (If blocked or missing data)
+      if (!rawTitle || !image || price === 0) {
+        console.log(`[INTERVENTION] Step 2: Auto-Intervention triggered for ${link_produto}`);
+        
+        // Try API first if it's ML
+        const id = discoverMLBId(html) || link_produto.match(/MLB[-]?(\d+)/i)?.[0];
+        if (id) {
+           const mlId = id.startsWith('MLB') ? id : `MLB${id}`;
+           // Try both /items and /products
+           for (const endpoint of ['items', 'products']) {
+              try {
+                const apiRes = await fetch(`https://api.mercadolibre.com/${endpoint}/${mlId}`);
+                if (apiRes.ok) {
+                   const apiData = await apiRes.json();
+                   rawTitle = apiData.title || rawTitle;
+                   image = apiData.thumbnail?.replace('-I.jpg', '-O.jpg') || apiData.pictures?.[0]?.url || image;
+                   price = apiData.price || price;
+                   console.log(`[INTERVENTION] API ${endpoint} success!`);
+                   break;
+                }
+              } catch (e) {}
+           }
+        }
+        
+        // If still missing, try Stealth Scraper
+        if (!rawTitle || !image) {
+           html = await attemptSimpleScrape(link_produto, true) || html;
+           const data = extractFromHtml(html);
+           rawTitle = data.title || rawTitle;
+           image = data.image || image;
+           price = data.price || price;
+        }
+      }
+
+      // --- FINAL RECOVERY (Only for Title if still empty) ---
       if (!rawTitle || rawTitle.match(/^MLB\d+$/i)) {
-        try {
-          const urlObj = new URL(link_produto);
-          const parts = urlObj.pathname.split('/').filter(Boolean);
-          let slug = parts[parts.length - 1] || "";
-          if ((slug.startsWith('MLB') || slug === 'p') && parts.length >= 2) {
-             slug = parts[parts.length - 3] || parts[parts.length - 2] || slug;
-          }
-          if (slug && slug.length > 3) {
-            rawTitle = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-          }
-        } catch(e) {}
+        const parts = new URL(link_produto).pathname.split('/').filter(Boolean);
+        let slug = parts[parts.length - 1] === 'p' ? parts[parts.length - 2] : parts[parts.length - 1];
+        if (slug?.startsWith('MLB')) slug = parts[parts.length - 3] || parts[parts.length - 2] || slug;
+        if (slug) rawTitle = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
       }
 
       if (!rawTitle) {
-        return res.status(200).json({ status: 'error', message: "Não foi possível carregar o produto. Verifique se o link está acessível.", link: link_produto });
+        return res.status(200).json({ status: 'error', message: "Dados incompletos. Verifique o link.", link: link_produto });
       }
       
       const title = rawTitle;
-      if (!image) image = "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
+      if (!image) {
+         // Deep Image Search in HTML
+         image = html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg|jpeg)/i)?.[0] || 
+                 "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
+      }
+
 
 
 
