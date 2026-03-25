@@ -439,6 +439,16 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.delete("/api/admin/products/all", authenticate, requireAdmin, async (req, res) => {
+    try {
+      const { error } = await supabase.from('products').delete().gt('id', 0);
+      if (error) throw error;
+      res.json({ success: true, message: "Todos os produtos foram removidos." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Click Tracking
   app.post("/api/products/:id/click", async (req, res) => {
     const { id } = req.params;
