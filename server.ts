@@ -303,14 +303,23 @@ async function startServer() {
       }
 
       // --- FINAL VALIDATION & RECOVERY ---
-      if (!rawTitle || rawTitle.toLowerCase().includes("mercado livre")) {
+      if (!rawTitle || rawTitle.toLowerCase().includes("mercado livre") || rawTitle.match(/^MLB\d+$/i)) {
         try {
           const urlObj = new URL(link_produto);
-          const parts = urlObj.pathname.split('/');
-          const slug = parts[parts.length - 1] || parts[1];
-          if (slug && slug.length > 5 && !slug.includes('.php')) {
-            rawTitle = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-            console.log(`[RECOVERY] Recovered title from URL: ${rawTitle}`);
+          const parts = urlObj.pathname.split('/').filter(Boolean);
+          let slug = parts[parts.length - 1] || "";
+          
+          // If the slug is just the ID (e.g. .../p/MLB123), try to get the part before it
+          if ((slug.startsWith('MLB') || slug === 'p') && parts.length >= 2) {
+             slug = parts[parts.length - 3] || parts[parts.length - 2] || slug;
+          }
+          
+          if (slug && slug.length > 3) {
+            rawTitle = slug.split('-').map(word => {
+               const w = word.trim();
+               return w.charAt(0).toUpperCase() + w.slice(1);
+            }).join(' ');
+            console.log(`[RECOVERY] Recovered title: ${rawTitle}`);
           }
         } catch(e) {}
       }
@@ -319,43 +328,71 @@ async function startServer() {
         return res.status(200).json({ 
           status: 'error', 
           is_rate_limit: isRateLimit, 
-          message: isRateLimit ? "Bloqueio persistente em todos os métodos." : "Dados incompletos após 3 tentativas proativas.",
+          message: isRateLimit ? "Bloqueio persistente (Robot). Tente novamente em instantes." : "Não foi possível extrair o nome do produto.",
           link: link_produto 
         });
       }
       
       const title = rawTitle;
+      
+      // Resilient Image Fallback: Try multiple patterns if still missing
+      if (!image && html) {
+          const patterns = [
+            /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg|jpeg)/i,
+            /https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-I\.(?:webp|jpg|jpeg)/i,
+            /https:\/\/m\.media-amazon\.com\/images\/I\/[^"']+\.jpg/i
+          ];
+          for (const p of patterns) {
+             const imgMatch = html.match(p);
+             if (imgMatch) {
+                image = imgMatch[0];
+                break;
+             }
+          }
+      }
+      
       if (!image) image = "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
 
 
-      // --- CATEGORY & PRICE REFINEMENT (Skills Logic) ---
+      // --- DEEP CATEGORY & PRICE DISCOVERY ---
       if (categoryName === "Variedades" && html) {
-        if (link_produto.includes('mercadolivre.com.br')) {
-          const mlBreadMatch = Array.from(html.matchAll(/class=["']andes-breadcrumb__(?:item|link)["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*(?:<\/a>)?/gi));
-          if (mlBreadMatch.length > 0) {
-            const items = mlBreadMatch.map(m => m[1].trim()).filter(i => i && i !== ">");
-            if (items.length >= 1) {
-              categoryName = items[0];
-              subcategoryName = items[items.length - 1] || items[1] || subcategoryName;
-              console.log(`[CATEGORIA DISCOVERY] Base: ${categoryName} | Sub: ${subcategoryName}`);
-            }
+        // Look for any pattern that resembles breadcrumbs
+        const catPatterns = [
+          /andes-breadcrumb__(?:item|link)["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
+          /class=["']breadcrumb-item["'][^>]*>(?:<a[^>]*>)?\s*([^<]+)\s*/gi,
+          /aria-label=["']Breadcrumb["'][^>]*>([\s\S]*?)<\/nav>/i // Target the whole nav if needed
+        ];
+        
+        let foundCats: string[] = [];
+        for (const p of catPatterns) {
+          const matches = Array.from(html.matchAll(p));
+          if (matches.length > 0) {
+            foundCats = matches.map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(i => i && i.length > 2 && i !== ">");
+            if (foundCats.length > 0) break;
           }
-        } else if (link_produto.includes('amazon.com.br')) {
-          const amzBreadMatch = Array.from(html.matchAll(/class=["']a-link-normal a-color-tertiary["'][^>]*>\s*([^<]+)\s*/gi));
-          if (amzBreadMatch.length > 0) {
-            const items = amzBreadMatch.map(m => m[1].trim()).filter(Boolean);
-            if (items.length >= 1) {
-              categoryName = items[0];
-              subcategoryName = items[items.length - 1] || items[1] || subcategoryName;
-            }
-          }
+        }
+        
+        if (foundCats.length > 0) {
+          categoryName = foundCats[0];
+          subcategoryName = foundCats[foundCats.length - 1] || foundCats[1] || subcategoryName;
+          console.log(`[DEEP CATEGORY] ${categoryName} > ${subcategoryName}`);
         }
       }
 
-      // Final Price Polish
+      // Final Price Scrape (If still 0)
       if (price === 0 && html) {
-          const priceMatch = html.match(/class=["']andes-money-amount__fraction["'][^>]*>([^<]+)</i);
-          if (priceMatch) price = parseFloat(priceMatch[1].replace(/[^\d]/g, '')) || 0;
+          const pPatterns = [
+            /class=["']andes-money-amount__fraction["'][^>]*>([^<]+)</i,
+            /price["']?\s*:\s*["']?([\d.,]+)["']?/i,
+            /R\$\s?([\d.,]+)/i
+          ];
+          for (const p of pPatterns) {
+             const m = html.match(p);
+             if (m) {
+                price = parseFloat(m[1].replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.')) || 0;
+                if (price > 0) break;
+             }
+          }
       }
 
       // Ensure Category exists (Trim to avoid subtle duplicates)
@@ -385,7 +422,7 @@ async function startServer() {
           description: description || title,
           image: image,
           price: price,
-          price_original: price > 0 ? price * 1.3 : 0, // Mocked discount
+          price_original: price > 0 ? price * 1.35 : 0, 
           link_afiliado: link_afiliado,
           keywords: link_produto, 
           category_id: cat.id,
