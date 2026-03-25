@@ -28,7 +28,17 @@ export default function Home({ categories }: HomeProps) {
     fetch(`/api/products?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
-        setProducts(data);
+        if (Array.isArray(data)) {
+          setProducts(data);
+        } else {
+          console.error("Failed to load products", data);
+          setProducts([]);
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Error fetching products:", err);
+        setProducts([]);
         setLoading(false);
       });
   }, [categoryId, subcategoryId, search]);

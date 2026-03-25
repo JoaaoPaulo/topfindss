@@ -39,7 +39,8 @@
     "typescript": "^5.9.3",
     "zod": "^4.3.6",
     "autoprefixer": "^10.4.21",
-    "tailwindcss": "^4.1.14"
+    "tailwindcss": "^4.1.14",
+    "vite": "^5.0.0"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -17,7 +17,18 @@ export default function App() {
   const fetchCategories = () => {
     fetch("/api/categories")
       .then(res => res.json())
-      .then(setCategories);
+      .then(data => {
+        if (Array.isArray(data)) {
+          setCategories(data);
+        } else {
+          console.error("Failed to load categories", data);
+          setCategories([]);
+        }
+      })
+      .catch(err => {
+        console.error("Error fetching categories:", err);
+        setCategories([]);
+      });
   };
 
   useEffect(() => {
