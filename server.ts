@@ -12,8 +12,8 @@ import { createClient } from "@supabase/supabase-js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const supabaseUrl = process.env.SUPABASE_URL || "https://muagiwdidfahamwptqlf.supabase.co";
-const supabaseKey = process.env.SUPABASE_ANON_KEY || "sb_publishable_J4bgcE-hJjShw8Xqss_0OQ_vNJHMicK";
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
   console.error("SUPABASE_URL e SUPABASE_ANON_KEY precisam estar configurados no .env");
@@ -52,7 +52,7 @@ async function startServer() {
   };
 
   const requireAdmin = (req: any, res: any, next: any) => {
-    if (!req.user || req.user.is_admin !== 1) {
+    if (!req.user || !req.user.is_admin) {
       return res.status(403).json({ error: "Forbidden: Admins only" });
     }
     next();
@@ -61,12 +61,31 @@ async function startServer() {
   // API Routes
   app.post("/api/login", async (req, res) => {
     const { email, password } = req.body;
+    console.log(`[LOGIN] Tentativa de login para: ${email}`);
+    
     const { data: user, error } = await supabase.from('users').select('*').eq('email', email).single();
-    if (error || !user || !bcrypt.compareSync(password, user.password)) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    
+    if (error) {
+      console.error("[LOGIN] Erro ao buscar usuário no Supabase:", error.message, "| Code:", error.code);
+      return res.status(401).json({ error: "Credenciais inválidas" });
     }
+    
+    if (!user) {
+      console.warn("[LOGIN] Usuário não encontrado:", email);
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    console.log(`[LOGIN] Usuário encontrado: ID=${user.id}, is_admin=${user.is_admin}, hash_length=${user.password?.length}`);
+
+    const isPasswordCorrect = bcrypt.compareSync(password, user.password);
+    console.log(`[LOGIN] Senha correta? ${isPasswordCorrect}`);
+
+    if (!isPasswordCorrect) {
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
     const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: "1d" });
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, is_admin: user.is_admin === 1 } });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, is_admin: !!user.is_admin } });
   });
 
   app.post("/api/register", async (req, res) => {
@@ -94,7 +113,7 @@ async function startServer() {
   app.get("/api/auth/me", authenticate, async (req: any, res) => {
     const { data: user, error } = await supabase.from('users').select('id, name, email, is_admin').eq('id', req.user.id).single();
     if (error || !user) return res.status(404).json({ error: "User not found" });
-    res.json({ user: { ...user, is_admin: user.is_admin === 1 } });
+    res.json({ user: { ...user, is_admin: !!user.is_admin } });
   });
 
   // Users Management (Admin Only)
