@@ -921,6 +921,35 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
               exit={{ opacity: 0, y: -20 }}
               className="bg-white rounded-3xl border border-neutral-200 shadow-sm overflow-hidden"
             >
+              <div className="p-6 border-b border-neutral-100 flex items-center justify-between bg-white">
+                <h2 className="font-black text-lg">Catálogo de Produtos</h2>
+                <button
+                  onClick={() => {
+                    showConfirm("🚨 Excluir Tudo", "Atenção: Isso apagará TODOS os produtos cadastrados permanentemente. Deseja continuar?", async () => {
+                      try {
+                        const res = await fetch("/api/admin/products/all", {
+                          method: "DELETE",
+                          headers: { Authorization: `Bearer ${auth.token}` }
+                        });
+                        if (res.ok) {
+                          setProducts([]);
+                          fetchStats();
+                          showAlert("Sucesso", "Todos os produtos foram removidos.");
+                        } else {
+                          const err = await res.json();
+                          showAlert("Erro", err.error || "Falha ao excluir produtos.");
+                        }
+                      } catch (err) {
+                        showAlert("Erro", "Falha de conexão.");
+                      }
+                    });
+                  }}
+                  className="px-4 py-2 bg-red-50 text-red-600 rounded-xl text-sm font-bold hover:bg-red-100 transition-colors flex items-center gap-2 active:scale-95 transition-transform"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Apagar Todos os Itens
+                </button>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
