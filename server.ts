@@ -140,10 +140,15 @@ async function startServer() {
 
   // Bulk Import Endpoint
   app.post("/api/admin/products/import-process", authenticate, requireAdmin, async (req, res) => {
-    const { marketplace, link_produto, link_afiliado } = req.body;
+    const { link_produto: rawLink, link_afiliado, marketplace } = req.body;
+    const link_produto = rawLink?.trim();
+
+    if (!link_produto || !link_afiliado) {
+      return res.status(400).json({ status: 'error', message: 'Link do produto e link de afiliado são obrigatórios.' });
+    }
 
     try {
-      // 1. Check for duplicates using the keywords column (which will store our source link)
+      // 1. Check for duplicates
       const { data: existing } = await supabase
         .from('products')
         .select('id, name')
@@ -158,38 +163,62 @@ async function startServer() {
         });
       }
 
-      // --- STEALTH LOGIC (Inspired by Skill-Agent) ---
+      // --- STEALTH LOGIC (Improved) ---
       const UAs = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
+        { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36", browser: 'chrome' },
+        { ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36", browser: 'chrome' },
+        { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36", browser: 'edge' },
+        { ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0", browser: 'firefox' }
       ];
-      const randomUA = UAs[Math.floor(Math.random() * UAs.length)];
+      const selected = UAs[Math.floor(Math.random() * UAs.length)];
+
+      const baseHeaders: any = {
+        'User-Agent': selected.ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer': link_produto.includes('mercadolivre.com.br') ? 'https://www.mercadolivre.com.br/' : 'https://www.google.com/'
+      };
+
+      if (selected.browser === 'chrome' || selected.browser === 'edge') {
+        baseHeaders['Sec-Ch-Ua'] = '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"';
+        baseHeaders['Sec-Ch-Ua-Mobile'] = '?0';
+        baseHeaders['Sec-Ch-Ua-Platform'] = '"Windows"';
+        baseHeaders['Sec-Fetch-Dest'] = 'document';
+        baseHeaders['Sec-Fetch-Mode'] = 'navigate';
+        baseHeaders['Sec-Fetch-Site'] = 'none';
+        baseHeaders['Sec-Fetch-User'] = '?1';
+      }
 
       // 2. Fetch and Scrape
-      console.log(`[IMPORT] Scraping: ${link_produto} | UA: ${randomUA.slice(0, 30)}...`);
-      const response = await fetch(link_produto, {
-        headers: {
-          'User-Agent': randomUA,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-          'Sec-Ch-Ua-Mobile': '?0',
-          'Sec-Ch-Ua-Platform': '"Windows"',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1',
-          'Referer': link_produto.includes('mercadolivre.com.br') ? 'https://www.mercadolivre.com.br/' : 'https://www.google.com/'
-        }
-      });
+      console.log(`[IMPORT] Scraping: ${link_produto} | UA: ${selected.browser}`);
       
-      if (!response.ok) throw new Error(`Falha ao acessar link: Status ${response.status}`);
+      let response;
+      try {
+        response = await fetch(link_produto, { 
+          headers: baseHeaders,
+          signal: (AbortSignal as any).timeout(15000)
+        });
+      } catch (fetchErr: any) {
+        console.error(`[IMPORT ERROR] Erro de rede ao acessar ${link_produto}:`, fetchErr.message);
+        return res.status(200).json({ 
+          status: 'error', 
+          message: `Falha de conexão: ${fetchErr.message}`,
+          link: link_produto 
+        });
+      }
+      
+      if (!response.ok) {
+        console.error(`[IMPORT ERROR] Status ${response.status} para ${link_produto}`);
+        return res.status(200).json({ 
+          status: 'error', 
+          message: `O site retornou erro HTTP ${response.status}`,
+          link: link_produto 
+        });
+      }
+
       const html = await response.text();
 
       // Extract Meta Tags
