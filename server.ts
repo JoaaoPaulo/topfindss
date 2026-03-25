@@ -183,21 +183,60 @@ async function startServer() {
 
       // 3. Category Logic
       // Try to find category in breadcrumbs or use a default
-      let categoryName = "Importados";
-      let subcategoryName = marketplace || "Geral";
+      let categoryName = "Variedades";
+      let subcategoryName = "Geral";
 
-      // Basic breadcrumb extraction (simple heuristic)
-      const breadcrumbMatch = html.match(/breadcrumbs["']:\s*\[([^\]]+)\]/i);
-      if (breadcrumbMatch) {
-         try {
-           const items = JSON.parse(`[${breadcrumbMatch[1]}]`);
-           if (items.length > 0) categoryName = items[0].name || categoryName;
-           if (items.length > 1) subcategoryName = items[1].name || subcategoryName;
-         } catch(e) {}
+      // Method 1: JSON-LD BreadcrumbList
+      const ldJsonMatches = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/gi);
+      if (ldJsonMatches) {
+        for (const match of ldJsonMatches) {
+          try {
+            const content = match.replace(/<script[^>]*>|<\/script>/gi, '');
+            const json = JSON.parse(content);
+            const list = Array.isArray(json) ? json.find(i => i['@type'] === 'BreadcrumbList') : (json['@type'] === 'BreadcrumbList' ? json : null);
+            
+            if (list && list.itemListElement) {
+              const items = list.itemListElement.map((i: any) => i.name || (i.item && i.item.name)).filter(Boolean);
+              if (items.length >= 2) {
+                // Ignore first item if it's "Home" or similar
+                const startIdx = (items[0].toLowerCase().includes('home') || items[0].toLowerCase().includes('início')) ? 1 : 0;
+                categoryName = items[startIdx] || categoryName;
+                subcategoryName = items[startIdx + 1] || items[items.length - 1] || subcategoryName;
+                break;
+              }
+            }
+          } catch(e) {}
+        }
       }
 
-      // Ensure Category exists
-      let { data: cat } = await supabase.from('categories').select('id').eq('name', categoryName).maybeSingle();
+      // Method 2: Marketplace specific fallbacks (if JSON-LD failed)
+      if (categoryName === "Variedades") {
+        if (link_produto.includes('mercadolivre.com.br')) {
+          const mlBreadMatch = html.match(/class=["']andes-breadcrumb__item["'][^>]*>\s*<a[^>]*>([^<]+)<\/a>/gi);
+          if (mlBreadMatch) {
+            const items = mlBreadMatch.map(m => m.match(/>([^<]+)<\/a>/)?.[1].trim()).filter(Boolean);
+            if (items.length >= 2) {
+              categoryName = items[0];
+              subcategoryName = items[1];
+            }
+          }
+        } else if (link_produto.includes('amazon.com.br')) {
+          const amzBreadMatch = html.match(/class=["']a-link-normal a-color-tertiary["'][^>]*>\s*([^<]+)\s*<\/a>/gi);
+          if (amzBreadMatch) {
+            const items = amzBreadMatch.map(m => m.match(/>([^<]+)<\/a>/)?.[1].trim()).filter(Boolean);
+            if (items.length >= 2) {
+              categoryName = items[0];
+              subcategoryName = items[1];
+            }
+          }
+        }
+      }
+
+      // Ensure Category exists (Trim to avoid subtle duplicates)
+      categoryName = categoryName.trim();
+      subcategoryName = subcategoryName.trim();
+
+      let { data: cat } = await supabase.from('categories').select('id').ilike('name', categoryName).maybeSingle();
       if (!cat) {
         const { data: newCat, error: catErr } = await supabase.from('categories').insert([{ name: categoryName }]).select().single();
         if (catErr) throw catErr;
@@ -205,7 +244,7 @@ async function startServer() {
       }
 
       // Ensure Subcategory exists
-      let { data: sub } = await supabase.from('subcategories').select('id').eq('name', subcategoryName).eq('category_id', cat.id).maybeSingle();
+      let { data: sub } = await supabase.from('subcategories').select('id').ilike('name', subcategoryName).eq('category_id', cat.id).maybeSingle();
       if (!sub) {
         const { data: newSub, error: subErr } = await supabase.from('subcategories').insert([{ name: subcategoryName, category_id: cat.id }]).select().single();
         if (subErr) throw subErr;
