@@ -158,15 +158,38 @@ async function startServer() {
         });
       }
 
+      // --- STEALTH LOGIC (Inspired by Skill-Agent) ---
+      const UAs = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
+      ];
+      const randomUA = UAs[Math.floor(Math.random() * UAs.length)];
+
       // 2. Fetch and Scrape
-      console.log(`[IMPORT] Scraping: ${link_produto}`);
+      console.log(`[IMPORT] Scraping: ${link_produto} | UA: ${randomUA.slice(0, 30)}...`);
       const response = await fetch(link_produto, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': randomUA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+          'Referer': link_produto.includes('mercadolivre.com.br') ? 'https://www.mercadolivre.com.br/' : 'https://www.google.com/'
         }
       });
       
-      if (!response.ok) throw new Error(`Falha ao acessar link: ${response.statusText}`);
+      if (!response.ok) throw new Error(`Falha ao acessar link: Status ${response.status}`);
       const html = await response.text();
 
       // Extract Meta Tags
@@ -175,11 +198,27 @@ async function startServer() {
         return html.match(regex)?.[1] || "";
       };
 
-      const title = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "Produto sem título";
+      const rawTitle = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
       const image = getMeta('image');
       const description = getMeta('description');
       const priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
       const price = parseFloat(priceStr.replace(',', '.'));
+
+      // --- VALIDATION ---
+      const genericTerms = ["mercado livre", "mercadolivre", "amazon.com.br", "amazon.com", "shopee", "atendimento ao cliente"];
+      const isGeneric = !rawTitle || genericTerms.some(term => rawTitle.toLowerCase() === term || rawTitle.toLowerCase().includes("bot check") || rawTitle.toLowerCase().includes("robot"));
+      
+      if (isGeneric) {
+        throw new Error("Página de bloqueio detectada ou título genérico.");
+      }
+      if (!image || image.length < 10) {
+        throw new Error("Imagem do produto não encontrada.");
+      }
+      if (price <= 0) {
+        throw new Error("Preço do produto não encontrado.");
+      }
+
+      const title = rawTitle;
 
       // 3. Category Logic
       // Try to find category in breadcrumbs or use a default
