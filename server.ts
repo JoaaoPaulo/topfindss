@@ -172,81 +172,84 @@ async function startServer() {
       ];
       const selected = UAs[Math.floor(Math.random() * UAs.length)];
 
+      // --- EXTREME STEALTH HEADERS ---
       const baseHeaders: any = {
-        'User-Agent': selected.ua,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': link_produto.includes('mercadolivre.com.br') ? 'https://www.mercadolivre.com.br/' : 'https://www.google.com/'
+        'authority': 'www.mercadolivre.com.br',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'cache-control': 'max-age=0',
+        'device-memory': '8',
+        'priority': 'u=0, i',
+        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        'sec-ch-ua-arch': '"x86"',
+        'sec-ch-ua-full-version-list': '"Chromium";v="124.0.6367.119", "Google Chrome";v="124.0.6367.119", "Not-A.Brand";v="99.0.0.0"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-model': '""',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none',
+        'sec-fetch-user': '?1',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'referer': 'https://www.google.com/'
       };
 
-      if (selected.browser === 'chrome' || selected.browser === 'edge') {
-        baseHeaders['Sec-Ch-Ua'] = '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"';
-        baseHeaders['Sec-Ch-Ua-Mobile'] = '?0';
-        baseHeaders['Sec-Ch-Ua-Platform'] = '"Windows"';
-        baseHeaders['Sec-Fetch-Dest'] = 'document';
-        baseHeaders['Sec-Fetch-Mode'] = 'navigate';
-        baseHeaders['Sec-Fetch-Site'] = 'none';
-        baseHeaders['Sec-Fetch-User'] = '?1';
-      }
-
       // 2. Fetch and Scrape
-      console.log(`[IMPORT] Scraping: ${link_produto} | UA: ${selected.browser}`);
+      console.log(`[IMPORT] Scraping: ${link_produto}`);
       
       let response;
       try {
         response = await fetch(link_produto, { 
           headers: baseHeaders,
-          signal: (AbortSignal as any).timeout(15000)
+          signal: (AbortSignal as any).timeout(20000)
         });
       } catch (fetchErr: any) {
-        console.error(`[IMPORT ERROR] Erro de rede ao acessar ${link_produto}:`, fetchErr.message);
-        return res.status(200).json({ 
-          status: 'error', 
-          message: `Falha de conexão: ${fetchErr.message}`,
-          link: link_produto 
-        });
+        console.error(`[IMPORT ERROR] Erro de rede:`, fetchErr.message);
+        return res.status(200).json({ status: 'error', message: `Rede: ${fetchErr.message}` });
       }
       
-      if (!response.ok) {
-        console.error(`[IMPORT ERROR] Status ${response.status} para ${link_produto}`);
-        return res.status(200).json({ 
-          status: 'error', 
-          message: `O site retornou erro HTTP ${response.status}`,
-          link: link_produto 
-        });
+      let html = "";
+      if (response.ok) {
+        html = await response.text();
       }
-
-      const html = await response.text();
 
       // Extract Meta Tags
       const getMeta = (prop: string) => {
-        const regex = new RegExp(`<meta (?:property|name)=["'](?:og:|product:|)${prop}["'] content=["']([^"']+)["']`, 'i');
+        const regex = new RegExp(`<meta [^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']\s*content=["']([^"']+)["']`, 'i');
         return html.match(regex)?.[1] || "";
       };
 
-      const rawTitle = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
-      const image = getMeta('image');
-      const description = getMeta('description');
-      const priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
-      const price = parseFloat(priceStr.replace(',', '.'));
+      let rawTitle = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
+      let image = getMeta('image');
+      let description = getMeta('description');
+      let priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
 
-      // --- VALIDATION ---
-      const genericTerms = ["mercado livre", "mercadolivre", "amazon.com.br", "amazon.com", "shopee", "atendimento ao cliente"];
-      const isGeneric = !rawTitle || genericTerms.some(term => rawTitle.toLowerCase() === term || rawTitle.toLowerCase().includes("bot check") || rawTitle.toLowerCase().includes("robot"));
+      // --- HEURISTIC FALLBACKS (If blocked or missing) ---
+      if (!rawTitle || rawTitle.toLowerCase().includes("atendimento") || rawTitle.toLowerCase() === "mercado livre") {
+        // Try to get title from URL slug
+        const urlObj = new URL(link_produto);
+        const slug = urlObj.pathname.split('/')[1];
+        if (slug && slug.length > 5 && !slug.includes('.php')) {
+          rawTitle = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        }
+      }
+
+      if (!image) {
+        // Mercado Livre specific fallback image regex
+        const imgRgx = html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_(\d+)-MLA(\d+)_(\d+)-O\.webp/i) || html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-F\.jpg/i);
+        image = imgRgx ? imgRgx[0] : "";
+      }
+
+      // --- VALIDATION AND CLEANUP ---
+      const price = parseFloat(priceStr.replace(',', '.'));
+      const genericTerms = ["mercado livre", "mercadolivre", "amazon.com.br", "shopee"];
+      const isGeneric = !rawTitle || (genericTerms.includes(rawTitle.toLowerCase()) && !image);
       
       if (isGeneric) {
-        throw new Error("Página de bloqueio detectada ou título genérico.");
+        throw new Error("Página de bloqueio total ou link inválido.");
       }
-      if (!image || image.length < 10) {
-        throw new Error("Imagem do produto não encontrada.");
-      }
-      if (price <= 0) {
-        throw new Error("Preço do produto não encontrado.");
-      }
-
+      if (!image) image = "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
       const title = rawTitle;
 
       // 3. Category Logic
