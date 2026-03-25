@@ -138,6 +138,108 @@ async function startServer() {
     }
   });
 
+  // Bulk Import Endpoint
+  app.post("/api/admin/products/import-process", authenticate, requireAdmin, async (req, res) => {
+    const { marketplace, link_produto, link_afiliado } = req.body;
+
+    try {
+      // 1. Check for duplicates using the keywords column (which will store our source link)
+      const { data: existing } = await supabase
+        .from('products')
+        .select('id, name')
+        .eq('keywords', link_produto)
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(200).json({ 
+          status: 'duplicate', 
+          message: `Produto já cadastrado: ${existing.name}`, 
+          product_id: existing.id 
+        });
+      }
+
+      // 2. Fetch and Scrape
+      console.log(`[IMPORT] Scraping: ${link_produto}`);
+      const response = await fetch(link_produto, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+      
+      if (!response.ok) throw new Error(`Falha ao acessar link: ${response.statusText}`);
+      const html = await response.text();
+
+      // Extract Meta Tags
+      const getMeta = (prop: string) => {
+        const regex = new RegExp(`<meta (?:property|name)=["'](?:og:|product:|)${prop}["'] content=["']([^"']+)["']`, 'i');
+        return html.match(regex)?.[1] || "";
+      };
+
+      const title = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "Produto sem título";
+      const image = getMeta('image');
+      const description = getMeta('description');
+      const priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
+      const price = parseFloat(priceStr.replace(',', '.'));
+
+      // 3. Category Logic
+      // Try to find category in breadcrumbs or use a default
+      let categoryName = "Importados";
+      let subcategoryName = marketplace || "Geral";
+
+      // Basic breadcrumb extraction (simple heuristic)
+      const breadcrumbMatch = html.match(/breadcrumbs["']:\s*\[([^\]]+)\]/i);
+      if (breadcrumbMatch) {
+         try {
+           const items = JSON.parse(`[${breadcrumbMatch[1]}]`);
+           if (items.length > 0) categoryName = items[0].name || categoryName;
+           if (items.length > 1) subcategoryName = items[1].name || subcategoryName;
+         } catch(e) {}
+      }
+
+      // Ensure Category exists
+      let { data: cat } = await supabase.from('categories').select('id').eq('name', categoryName).maybeSingle();
+      if (!cat) {
+        const { data: newCat, error: catErr } = await supabase.from('categories').insert([{ name: categoryName }]).select().single();
+        if (catErr) throw catErr;
+        cat = newCat;
+      }
+
+      // Ensure Subcategory exists
+      let { data: sub } = await supabase.from('subcategories').select('id').eq('name', subcategoryName).eq('category_id', cat.id).maybeSingle();
+      if (!sub) {
+        const { data: newSub, error: subErr } = await supabase.from('subcategories').insert([{ name: subcategoryName, category_id: cat.id }]).select().single();
+        if (subErr) throw subErr;
+        sub = newSub;
+      }
+
+      // 4. Create Product
+      const { data: result, error: prodErr } = await supabase
+        .from('products')
+        .insert([{
+          name: title,
+          description: description,
+          image: image,
+          price: price,
+          price_original: price * 1.2, // Placeholder for discount look
+          link_afiliado: link_afiliado,
+          keywords: link_produto, // Using keywords column to store source link for duplicate detection
+          category_id: cat.id,
+          subcategory_id: sub.id,
+          featured: 0
+        }])
+        .select()
+        .single();
+
+      if (prodErr) throw prodErr;
+
+      res.json({ status: 'success', product: result });
+
+    } catch (err: any) {
+      console.error(`[IMPORT ERROR] ${link_produto}:`, err.message);
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
   // Categories & Subcategories
   // Categories & Subcategories
   app.get("/api/categories", async (req, res) => {

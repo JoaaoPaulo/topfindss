@@ -115,7 +115,7 @@ interface Stats {
 }
 
 export default function AdminDashboard({ auth, onLogout, categories, onRefreshCategories }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"stats" | "products" | "add" | "categories" | "users">("stats");
+  const [activeTab, setActiveTab] = useState<"stats" | "products" | "add" | "categories" | "users" | "import">("stats");
   const [stats, setStats] = useState<Stats | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [adminUsers, setAdminUsers] = useState<any[]>([]);
@@ -137,6 +137,10 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
     inputValue?: string;
     onConfirm?: (val?: string) => void;
   }>({ isOpen: false, title: '', type: 'alert' });
+
+  const [importResults, setImportResults] = useState<any[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importStats, setImportStats] = useState({ total: 0, processed: 0, success: 0, duplicate: 0, error: 0 });
 
   const navigate = useNavigate();
 
@@ -403,6 +407,75 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
     setActiveTab("add");
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      try {
+        const wb = (window as any).XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = (window as any).XLSX.utils.sheet_to_json(ws);
+        
+        if (data.length === 0) {
+          showAlert("Erro", "A planilha está vazia.");
+          return;
+        }
+
+        // Validate columns
+        const firstRow: any = data[0];
+        if (!firstRow.link_produto || !firstRow.link_afiliado) {
+          showAlert("Erro", "A planilha deve conter as colunas 'link_produto' e 'link_afiliado'.");
+          return;
+        }
+
+        processImport(data);
+      } catch (err) {
+        showAlert("Erro", "Falha ao ler o arquivo Excel.");
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const processImport = async (rows: any[]) => {
+    setIsImporting(true);
+    setImportResults([]);
+    setImportStats({ total: rows.length, processed: 0, success: 0, duplicate: 0, error: 0 });
+
+    for (const row of rows) {
+      try {
+        const res = await fetch("/api/admin/products/import-process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${auth.token}` },
+          body: JSON.stringify(row)
+        });
+        const data = await res.json();
+        
+        // Add original link for reference in list
+        data.source_link = row.link_produto;
+
+        setImportResults(prev => [data, ...prev]);
+        setImportStats(prev => ({
+          ...prev,
+          processed: prev.processed + 1,
+          success: data.status === 'success' ? prev.success + 1 : prev.success,
+          duplicate: data.status === 'duplicate' ? prev.duplicate + 1 : prev.duplicate,
+          error: data.status === 'error' ? prev.error + 1 : prev.error,
+        }));
+      } catch (err) {
+        setImportResults(prev => [{ status: 'error', message: 'Falha na conexão', source_link: row.link_produto }, ...prev]);
+        setImportStats(prev => ({ ...prev, processed: prev.processed + 1, error: prev.error + 1 }));
+      }
+    }
+    setIsImporting(false);
+    onRefreshCategories();
+    fetchProducts();
+    fetchStats();
+  };
+
   const selectedCategory = categories.find(c => c.id.toString() === selectedCategoryId?.toString());
 
   return (
@@ -520,6 +593,27 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
             </AnimatePresence>
           </button>
           <button
+            onClick={() => { setActiveTab("import"); setEditingProduct(null); }}
+            className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all text-sm font-bold ${activeTab === "import" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-white hover:bg-white/5"}`}
+            title={!isSidebarOpen ? "Importar" : undefined}
+          >
+            <div className="shrink-0 flex items-center justify-center w-6">
+              <Plus className="w-5 h-5 rotate-45" />
+            </div>
+            <AnimatePresence>
+              {isSidebarOpen && (
+                <motion.span
+                  initial={{ opacity: 0, width: 0 }}
+                  animate={{ opacity: 1, width: "auto" }}
+                  exit={{ opacity: 0, width: 0 }}
+                  className="whitespace-nowrap overflow-hidden"
+                >
+                  Importar
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </button>
+          <button
             onClick={() => setActiveTab("add")}
             className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all text-sm font-bold ${activeTab === "add" ? "bg-white/10 text-white" : "text-neutral-400 hover:text-white hover:bg-white/5"}`}
             title={!isSidebarOpen ? (editingProduct ? "Editar Produto" : "Novo Produto") : undefined}
@@ -594,6 +688,7 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
               {activeTab === "products" && "Gerenciar Produtos"}
               {activeTab === "categories" && "Gerenciar Categorias"}
               {activeTab === "users" && "Controle de Acessos"}
+              {activeTab === "import" && "Importação em Massa"}
               {activeTab === "add" && (editingProduct ? "Editar Produto" : "Adicionar Novo Produto")}
             </h1>
             <p className="text-neutral-500 mt-1">
@@ -1023,6 +1118,98 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "import" && (
+            <motion.div
+              key="import"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-8"
+            >
+              <div className="bg-white rounded-3xl border border-neutral-200 shadow-sm p-8">
+                <div className="max-w-xl mx-auto text-center space-y-6">
+                  <div className="w-20 h-20 bg-brand/5 text-brand rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Plus className="w-10 h-10 rotate-45" />
+                  </div>
+                  <h2 className="text-2xl font-black">Importar via Planilha</h2>
+                  <p className="text-neutral-500 text-sm">
+                    Envie um arquivo Excel (.xlsx) com as colunas: <br />
+                    <code className="bg-neutral-100 px-2 py-1 rounded text-brand font-bold">marketplace</code>, 
+                    <code className="bg-neutral-100 px-2 py-1 rounded text-brand font-bold ml-1">link_produto</code>, 
+                    <code className="bg-neutral-100 px-2 py-1 rounded text-brand font-bold ml-1">link_afiliado</code>
+                  </p>
+
+                  <div className="relative group">
+                    <input
+                      type="file"
+                      accept=".xlsx, .xls, .csv"
+                      onChange={handleFileUpload}
+                      disabled={isImporting}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                    />
+                    <div className={`border-2 border-dashed rounded-3xl p-10 transition-all ${isImporting ? 'bg-neutral-50 border-neutral-200' : 'border-neutral-200 group-hover:border-brand group-hover:bg-brand/5'}`}>
+                      <p className="font-bold text-neutral-400 group-hover:text-brand">
+                        {isImporting ? "Processando..." : "Clique para selecionar ou arraste o arquivo"}
+                      </p>
+                      <p className="text-xs text-neutral-400 mt-2">Formatos aceitos: .xlsx, .xls, .csv</p>
+                    </div>
+                  </div>
+                </div>
+
+                {importStats.total > 0 && (
+                  <div className="mt-12 space-y-8">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-neutral-50 p-4 rounded-2xl border border-neutral-100">
+                        <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Total</p>
+                        <p className="text-2xl font-black">{importStats.total}</p>
+                      </div>
+                      <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-emerald-600">
+                        <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Sucesso</p>
+                        <p className="text-2xl font-black">{importStats.success}</p>
+                      </div>
+                      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 text-amber-600">
+                        <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Duplicados</p>
+                        <p className="text-2xl font-black">{importStats.duplicate}</p>
+                      </div>
+                      <div className="bg-red-50 p-4 rounded-2xl border border-red-100 text-red-600">
+                        <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Erros</p>
+                        <p className="text-2xl font-black">{importStats.error}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="font-bold text-sm text-neutral-400 uppercase tracking-widest">Progresso do Cadastro</h3>
+                      <div className="max-h-96 overflow-y-auto pr-2 space-y-2 no-scrollbar">
+                        {importResults.map((res, i) => (
+                          <div key={i} className={`p-4 rounded-xl border flex items-center justify-between gap-4 animate-in slide-in-from-top-2 duration-300 ${
+                            res.status === 'success' ? 'bg-emerald-50 border-emerald-100' : 
+                            res.status === 'duplicate' ? 'bg-amber-50 border-amber-100' : 'bg-red-50 border-red-100'
+                          }`}>
+                            <div className="flex flex-col min-w-0">
+                              <span className={`text-[10px] font-bold uppercase tracking-widest ${
+                                res.status === 'success' ? 'text-emerald-500' : 
+                                res.status === 'duplicate' ? 'text-amber-500' : 'text-red-500'
+                              }`}>
+                                {res.status === 'success' ? 'Sucesso' : res.status === 'duplicate' ? 'Duplicado' : 'Erro'}
+                              </span>
+                              <span className="text-sm font-bold truncate text-neutral-800">
+                                {res.product?.name || res.message || "Falha desconhecida"}
+                              </span>
+                              <span className="text-[10px] text-neutral-400 truncate max-w-xs">{res.source_link}</span>
+                            </div>
+                            {res.status === 'success' && <Check className="w-5 h-5 text-emerald-500 shrink-0" />}
+                            {res.status === 'duplicate' && <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />}
+                            {res.status === 'error' && <X className="w-5 h-5 text-red-500 shrink-0" />}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
