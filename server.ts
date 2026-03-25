@@ -172,31 +172,18 @@ async function startServer() {
       ];
       const selected = UAs[Math.floor(Math.random() * UAs.length)];
 
-      // --- EXTREME STEALTH HEADERS ---
+      // --- MOBILE-FIRST STEALTH ---
       const baseHeaders: any = {
-        'authority': 'www.mercadolivre.com.br',
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'cache-control': 'max-age=0',
-        'device-memory': '8',
-        'priority': 'u=0, i',
-        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'sec-ch-ua-arch': '"x86"',
-        'sec-ch-ua-full-version-list': '"Chromium";v="124.0.6367.119", "Google Chrome";v="124.0.6367.119", "Not-A.Brand";v="99.0.0.0"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-model': '""',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'none',
-        'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'referer': 'https://www.google.com/'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+        'Referer': 'https://www.google.com/',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
       };
 
       // 2. Fetch and Scrape
-      console.log(`[IMPORT] Scraping: ${link_produto}`);
+      console.log(`[IMPORT] Scraping (Mobile): ${link_produto}`);
       
       let response;
       try {
@@ -205,7 +192,7 @@ async function startServer() {
           signal: (AbortSignal as any).timeout(20000)
         });
       } catch (fetchErr: any) {
-        console.error(`[IMPORT ERROR] Erro de rede:`, fetchErr.message);
+        console.error(`[IMPORT ERROR] Rede:`, fetchErr.message);
         return res.status(200).json({ status: 'error', message: `Rede: ${fetchErr.message}` });
       }
       
@@ -214,34 +201,41 @@ async function startServer() {
         html = await response.text();
       }
 
-      // Extract Meta Tags (Reliable version)
+      // DEBUG: Log first bit of HTML to console
+      // console.log(`[IMPORT DEBUG] HTML Start: ${html.slice(0, 300).replace(/\n/g, ' ')}`);
+
+      // Extract Meta Tags (Greddy Multiline safe)
       const getMeta = (prop: string) => {
+        // [^>]*? [\s\S]*? to handle any attribute order and newlines
         const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
         const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']`, 'i');
         return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
       };
 
-      let rawTitle = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
+      let rawTitle = getMeta('title') || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
       let image = getMeta('image');
       let description = getMeta('description');
       
-      // Price Extraction (Multiple fallbacks)
+      // Price Extraction (Multiple fallbacks with sanitization)
       let priceStr = getMeta('price:amount');
       if (!priceStr || priceStr === "0") {
          priceStr = html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
       }
       if (!priceStr || priceStr === "0") {
+         // UI Fallback (Andes component)
          const fraction = html.match(/class=["']andes-money-amount__fraction["'][^>]*>([\d.,]+)<\/span>/i)?.[1];
          const cents = html.match(/class=["']andes-money-amount__cents[^>]*>([\d]+)<\/span>/i)?.[1] || "00";
          if (fraction) priceStr = `${fraction}.${cents}`;
       }
       
-      const price = parseFloat(priceStr.replace('.', '').replace(',', '.'));
+      const cleanPrice = priceStr.replace(/[^\d.,]/g, '').replace('.', '').replace(',', '.');
+      const price = parseFloat(cleanPrice) || 0;
 
       // --- HEURISTIC FALLBACKS ---
       if (!rawTitle || rawTitle.toLowerCase().includes("atendimento") || rawTitle.toLowerCase() === "mercado livre") {
         const urlObj = new URL(link_produto);
-        const slug = urlObj.pathname.split('/')[1];
+        const parts = urlObj.pathname.split('/');
+        const slug = parts[1] === 'p' ? parts[parts.length - 1] : parts[1];
         if (slug && slug.length > 5 && !slug.includes('.php')) {
           rawTitle = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
         }
@@ -257,7 +251,11 @@ async function startServer() {
       const isGeneric = !rawTitle || (genericTerms.includes(rawTitle.toLowerCase()) && !image);
       
       if (isGeneric) {
-        throw new Error("Página de bloqueio total ou link inválido.");
+        return res.status(200).json({ 
+          status: 'error', 
+          message: `Bloqueio ou Link Inválido. HTML: ${html.slice(0, 50).replace(/[^a-z0-9 ]/gi, '')}...`,
+          link: link_produto 
+        });
       }
       if (!image) image = "https://via.placeholder.com/500?text=Imagem+Nao+Encontrada";
       const title = rawTitle;
@@ -266,15 +264,16 @@ async function startServer() {
       let categoryName = "Variedades";
       let subcategoryName = "Geral";
 
-      // Method 1: Breadcrumbs from HTML (Preferred for ML)
-      const bcMatch = html.match(/class=["']andes-breadcrumb__link["'][^>]*>([^<]+)<\/a>/gi);
-      if (bcMatch && bcMatch.length >= 2) {
-        const items = bcMatch.map(m => m.match(/>([^<]+)<\/a>/)?.[1].trim()).filter(Boolean);
+      // Method 1: Breadcrumbs (Strong for ML)
+      const bcMatches = Array.from(html.matchAll(/class=["']andes-breadcrumb__link["'][^>]*>([^<]+)<\/a>/gi));
+      if (bcMatches && bcMatches.length >= 1) {
+        const items = bcMatches.map(m => m[1].trim());
         categoryName = items[0] || categoryName;
-        subcategoryName = items[1] || items[items.length - 1] || subcategoryName;
+        subcategoryName = items[items.length - 1] || items[1] || subcategoryName;
       } else {
         // Method 2: JSON-LD fallback
         const ldMatches = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/gi);
+        // ... (rest of JSON-LD logic I'll keep but cleaner)
         if (ldMatches) {
           for (const match of ldMatches) {
             try {
@@ -284,9 +283,8 @@ async function startServer() {
               if (list && list.itemListElement) {
                 const items = list.itemListElement.map((i: any) => i.name || (i.item && i.item.name)).filter(Boolean);
                 if (items.length >= 2) {
-                  const startIdx = (items[0].toLowerCase().includes('home') || items[0].toLowerCase().includes('início')) ? 1 : 0;
-                  categoryName = items[startIdx] || categoryName;
-                  subcategoryName = items[startIdx + 1] || items[items.length - 1] || subcategoryName;
+                  categoryName = items[0] || categoryName;
+                  subcategoryName = items[items.length - 1] || subcategoryName;
                   break;
                 }
               }
