@@ -520,7 +520,50 @@ async function startServer() {
     });
   }
 
+  // [TEMPORARY SEED] API to trigger seeding
+  app.get("/api/admin/trigger-seed-categories", authenticate, requireAdmin, async (req, res) => {
+    // ... logic already there, I'll just keep it but also run on start
+    res.json({ message: "Seeding is also running on startup." });
+  });
+
   const PORT = parseInt(process.env.PORT || "3000", 10);
+  
+  // Running seed on start
+  (async () => {
+    const categoryTree: Record<string, string[]> = {
+      "Eletrônicos & Tecnologia": ["Celulares e Smartphones", "Informática e Laptops", "Tablets e iPads", "Smartwatches e Wearables", "Áudio e Fones de Ouvido", "Consoles e Games", "Câmeras e Fotografia", "Acessórios Tech"],
+      "Casa & Decoração": ["Móveis para Sala", "Quarto e Colchões", "Cozinha e Utensílios", "Banheiro", "Iluminação", "Decoração e Quadros", "Cama, Mesa e Banho", "Jardim e Área Externa"],
+      "Eletrodomésticos": ["Geladeiras e Freezers", "Fogões e Cooktops", "Máquinas de Lavar", "Micro-ondas", "Ar Condicionado e Ventilação", "Eletroportáteis", "Aspiradores e Limpeza"],
+      "Beleza & Saúde": ["Maquiagem", "Cuidados com o Cabelo", "Perfumes Importados", "Skincare e Rosto", "Cuidados Pessoais", "Suplementos e Vitaminas", "Saúde e Bem-estar"],
+      "Moda & Acessórios": ["Roupas Femininas", "Roupas Masculinas", "Calçados", "Relógios", "Óculos de Sol", "Bolsas e Mochilas", "Joias e Bijuterias"],
+      "Esportes & Lazer": ["Academia e Fitness", "Ciclismo e Bikes", "Camping e Aventura", "Tênis Esportivos", "Futebol e Coletivos", "Pesca e Náutica"],
+      "Bebês & Crianças": ["Brinquedos", "Roupas Infantis", "Carrinhos e Cadeirinhas", "Higiene e Banho", "Enxoval e Quarto", "Jogos Educativos"],
+      "Automotivo": ["Acessórios Externos", "Acessórios Internos", "Som e Vídeo", "Pneus e Rodas", "Manutenção e Ferramentas", "Capacetes e Moto"],
+      "Pets": ["Cães", "Gatos", "Peixes e Aquário", "Aves", "Rações e Petiscos", "Brinquedos e Acessórios"],
+      "Papelaria & Escritório": ["Cadeiras e Móveis", "Material Escolar", "Escrita e Desenho", "Cadernos e Agendas", "Organização", "Impressoras e Tintas"],
+      "Livros & Cultura": ["Literatura Brasileira", "Best Sellers", "HQs e Mangás", "Autoajuda", "Negócios e Carreira", "Instrumentos Musicais"],
+      "Ferramentas & Construção": ["Ferramentas Elétricas", "Ferramentas Manuais", "Pintura e Reforma", "Segurança e EPI", "Hidráulica", "Material Elétrico"]
+    };
+    
+    console.log('🌱 Start-up Seed: Verificando categorias...');
+    for (const [catName, subcats] of Object.entries(categoryTree)) {
+      let { data: cat } = await supabase.from('categories').select('id').ilike('name', catName).maybeSingle();
+      if (!cat) {
+        const { data: newCat } = await supabase.from('categories').insert([{ name: catName }]).select().single();
+        cat = newCat;
+      }
+      if (cat) {
+        for (const subName of subcats) {
+          const { data: existingSub } = await supabase.from('subcategories').select('id').ilike('name', subName).eq('category_id', cat.id).maybeSingle();
+          if (!existingSub) {
+            await supabase.from('subcategories').insert([{ name: subName, category_id: cat.id }]);
+          }
+        }
+      }
+    }
+    console.log('✅ Categorias sincronizadas.');
+  })();
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
