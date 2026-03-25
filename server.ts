@@ -214,20 +214,32 @@ async function startServer() {
         html = await response.text();
       }
 
-      // Extract Meta Tags
+      // Extract Meta Tags (Reliable version)
       const getMeta = (prop: string) => {
-        const regex = new RegExp(`<meta [^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']\s*content=["']([^"']+)["']`, 'i');
-        return html.match(regex)?.[1] || "";
+        const r1 = new RegExp(`<meta[^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["'][^>]*?content=["']([^"']+)["']`, 'i');
+        const r2 = new RegExp(`<meta[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:|product:|)${prop}["']`, 'i');
+        return html.match(r1)?.[1] || html.match(r2)?.[1] || "";
       };
 
       let rawTitle = getMeta('title') || html.match(/<title>([^<]+)<\/title>/i)?.[1]?.split('|')[0].trim() || "";
       let image = getMeta('image');
       let description = getMeta('description');
-      let priceStr = getMeta('price:amount') || html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
+      
+      // Price Extraction (Multiple fallbacks)
+      let priceStr = getMeta('price:amount');
+      if (!priceStr || priceStr === "0") {
+         priceStr = html.match(/"price":\s*["']?([\d.,]+)["']?/i)?.[1] || "0";
+      }
+      if (!priceStr || priceStr === "0") {
+         const fraction = html.match(/class=["']andes-money-amount__fraction["'][^>]*>([\d.,]+)<\/span>/i)?.[1];
+         const cents = html.match(/class=["']andes-money-amount__cents[^>]*>([\d]+)<\/span>/i)?.[1] || "00";
+         if (fraction) priceStr = `${fraction}.${cents}`;
+      }
+      
+      const price = parseFloat(priceStr.replace('.', '').replace(',', '.'));
 
-      // --- HEURISTIC FALLBACKS (If blocked or missing) ---
+      // --- HEURISTIC FALLBACKS ---
       if (!rawTitle || rawTitle.toLowerCase().includes("atendimento") || rawTitle.toLowerCase() === "mercado livre") {
-        // Try to get title from URL slug
         const urlObj = new URL(link_produto);
         const slug = urlObj.pathname.split('/')[1];
         if (slug && slug.length > 5 && !slug.includes('.php')) {
@@ -236,13 +248,11 @@ async function startServer() {
       }
 
       if (!image) {
-        // Mercado Livre specific fallback image regex
-        const imgRgx = html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_(\d+)-MLA(\d+)_(\d+)-O\.webp/i) || html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-F\.jpg/i);
-        image = imgRgx ? imgRgx[0] : "";
+        const imgMatch = html.match(/https:\/\/http2\.mlstatic\.com\/D_NQ_NP_[^"']+-[OF]\.(?:webp|jpg)/i);
+        image = imgMatch ? imgMatch[0] : "";
       }
 
-      // --- VALIDATION AND CLEANUP ---
-      const price = parseFloat(priceStr.replace(',', '.'));
+      // --- VALIDATION ---
       const genericTerms = ["mercado livre", "mercadolivre", "amazon.com.br", "shopee"];
       const isGeneric = !rawTitle || (genericTerms.includes(rawTitle.toLowerCase()) && !image);
       
@@ -253,30 +263,35 @@ async function startServer() {
       const title = rawTitle;
 
       // 3. Category Logic
-      // Try to find category in breadcrumbs or use a default
       let categoryName = "Variedades";
       let subcategoryName = "Geral";
 
-      // Method 1: JSON-LD BreadcrumbList
-      const ldJsonMatches = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/gi);
-      if (ldJsonMatches) {
-        for (const match of ldJsonMatches) {
-          try {
-            const content = match.replace(/<script[^>]*>|<\/script>/gi, '');
-            const json = JSON.parse(content);
-            const list = Array.isArray(json) ? json.find(i => i['@type'] === 'BreadcrumbList') : (json['@type'] === 'BreadcrumbList' ? json : null);
-            
-            if (list && list.itemListElement) {
-              const items = list.itemListElement.map((i: any) => i.name || (i.item && i.item.name)).filter(Boolean);
-              if (items.length >= 2) {
-                // Ignore first item if it's "Home" or similar
-                const startIdx = (items[0].toLowerCase().includes('home') || items[0].toLowerCase().includes('início')) ? 1 : 0;
-                categoryName = items[startIdx] || categoryName;
-                subcategoryName = items[startIdx + 1] || items[items.length - 1] || subcategoryName;
-                break;
+      // Method 1: Breadcrumbs from HTML (Preferred for ML)
+      const bcMatch = html.match(/class=["']andes-breadcrumb__link["'][^>]*>([^<]+)<\/a>/gi);
+      if (bcMatch && bcMatch.length >= 2) {
+        const items = bcMatch.map(m => m.match(/>([^<]+)<\/a>/)?.[1].trim()).filter(Boolean);
+        categoryName = items[0] || categoryName;
+        subcategoryName = items[1] || items[items.length - 1] || subcategoryName;
+      } else {
+        // Method 2: JSON-LD fallback
+        const ldMatches = html.match(/<script type=["']application\/ld\+json["']>([^<]+)<\/script>/gi);
+        if (ldMatches) {
+          for (const match of ldMatches) {
+            try {
+              const content = match.replace(/<script[^>]*>|<\/script>/gi, '');
+              const json = JSON.parse(content);
+              const list = Array.isArray(json) ? json.find(i => i['@type'] === 'BreadcrumbList') : (json['@type'] === 'BreadcrumbList' ? json : null);
+              if (list && list.itemListElement) {
+                const items = list.itemListElement.map((i: any) => i.name || (i.item && i.item.name)).filter(Boolean);
+                if (items.length >= 2) {
+                  const startIdx = (items[0].toLowerCase().includes('home') || items[0].toLowerCase().includes('início')) ? 1 : 0;
+                  categoryName = items[startIdx] || categoryName;
+                  subcategoryName = items[startIdx + 1] || items[items.length - 1] || subcategoryName;
+                  break;
+                }
               }
-            }
-          } catch(e) {}
+            } catch(e) {}
+          }
         }
       }
 

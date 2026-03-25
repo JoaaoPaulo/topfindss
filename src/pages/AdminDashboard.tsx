@@ -447,8 +447,8 @@ export default function AdminDashboard({ auth, onLogout, categories, onRefreshCa
 
     for (const row of rows) {
       try {
-        // Anti-bot jitter delay: 2000ms to 4500ms
-        const jitter = Math.floor(Math.random() * 2500) + 2000;
+        // Optimized Jitter: 1200ms to 2500ms (Fast but safe)
+        const jitter = Math.floor(Math.random() * 1300) + 1200;
         await new Promise(resolve => setTimeout(resolve, jitter));
 
         const res = await fetch("/api/admin/products/import-process", {
