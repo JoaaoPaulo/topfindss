@@ -1,0 +1,12 @@
+# Dependências e build
+node_modules/
+dist/
+
+# Variáveis de ambiente (nunca commitar)
+.env
+.env.local
+.env.*.local
+
+# Logs e sistema
+*.log
+.DS_Store
