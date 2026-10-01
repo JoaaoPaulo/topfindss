@@ -12,17 +12,19 @@ import { createClient } from "@supabase/supabase-js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const REQUIRED_ENV = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "JWT_SECRET"];
+const missingEnv = REQUIRED_ENV.filter((name) => !process.env[name]);
 
-if (!supabaseUrl || !supabaseKey) {
-  console.error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar configurados no .env");
+if (missingEnv.length > 0) {
+  console.error(`Variáveis de ambiente obrigatórias não definidas: ${missingEnv.join(", ")}. Veja o .env.example.`);
   process.exit(1);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseUrl = process.env.SUPABASE_URL as string;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string;
+const JWT_SECRET = process.env.JWT_SECRET as string;
 
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
+export const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- STEALTH HELPERS ---
 function getStealthHeaders() {
@@ -66,15 +68,39 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // Auth Middleware (BYPASS ENABLED)
+  // Auth Middleware
   const authenticate = async (req: any, res: any, next: any) => {
-    // Mock user for bypass
-    req.user = { id: 1, email: "admin@bypass.com", is_admin: 1, name: "Admin Convidado" };
+    const header = req.headers.authorization || "";
+    const [scheme, token] = header.split(" ");
+    if (scheme !== "Bearer" || !token) {
+      return res.status(401).json({ error: "Token não fornecido" });
+    }
+
+    let payload: any;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: "Token inválido" });
+    }
+
+    // O token só carrega o id; is_admin é lido do banco para refletir o estado atual
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, name, email, is_admin')
+      .eq('id', payload.id)
+      .maybeSingle();
+    if (error || !user) {
+      return res.status(401).json({ error: "Token inválido" });
+    }
+
+    req.user = { ...user, is_admin: !!user.is_admin };
     next();
   };
 
   const requireAdmin = (req: any, res: any, next: any) => {
-    // Bypass admin check
+    if (!req.user?.is_admin) {
+      return res.status(403).json({ error: "Acesso restrito a administradores" });
+    }
     next();
   };
 
