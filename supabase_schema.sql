@@ -50,9 +50,8 @@ CREATE TABLE public.clicks_log (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Inserindo o Usuário Mestre (Senha = ***REMOVIDO*** hashada com bcrypt)
-INSERT INTO public.users (name, email, password, is_admin)
-VALUES ('Administrador Mestre', 'topfinds.dj2@gmail.com', '***REMOVIDO***', 1);
+-- O primeiro administrador é criado cadastrando um usuário pelo site
+-- e marcando is_admin = 1 na tabela users (veja o README).
 
 -- Ativando RLS mas permitindo todas as operações (para testes, pode ser refinado dps)
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
