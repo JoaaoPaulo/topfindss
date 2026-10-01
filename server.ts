@@ -13,10 +13,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error("SUPABASE_URL e SUPABASE_ANON_KEY precisam estar configurados no .env");
+  console.error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar configurados no .env");
   process.exit(1);
 }
 
